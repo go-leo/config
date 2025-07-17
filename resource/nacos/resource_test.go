@@ -2,17 +2,18 @@ package nacos
 
 import (
 	"context"
-	"errors"
 	"os"
-	"strings"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/go-leo/config"
+	"github.com/go-leo/config/format"
+	"github.com/go-leo/config/format/env"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func nacosFactory() (config_client.IConfigClient, error) {
@@ -41,6 +42,8 @@ func TestResource_Load_Nacos(t *testing.T) {
 		return
 	}
 
+	format.RegisterFormatter("env", env.Env{})
+
 	_, err = configClient.PublishConfig(vo.ConfigParam{
 		DataId:  "nacos",
 		Group:   "test",
@@ -64,11 +67,10 @@ func TestResource_Load_Nacos(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	r := Resource{
-		Formatter: config.Env{},
-		client:    configClient,
-		group:     "test",
-		dataId:    "nacos",
+	r, err := New(configClient, "test", "nacos.env")
+	if err != nil {
+		t.Errorf("New() error = %v", err)
+		return
 	}
 	ctx := context.Background()
 	content, err := r.Load(ctx)
@@ -77,8 +79,8 @@ func TestResource_Load_Nacos(t *testing.T) {
 		return
 	}
 
-	if !strings.Contains(string(content), "TEST_KEY=test_value") {
-		t.Errorf("Load() data = %v, want data to contain 'TEST_KEY=test_value'", string(content))
+	if !reflect.DeepEqual(content.AsMap(), map[string]any{"TEST_KEY": "test_value"}) {
+		t.Errorf("Load() data = %v, want data to contain 'TEST_KEY=test_value'", content.AsMap())
 	}
 
 	time.Sleep(time.Second)
@@ -114,16 +116,16 @@ func TestResource_Watch_Nacos(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	r := Resource{
-		Formatter: config.Env{},
-		client:    configClient,
-		group:     "test",
-		dataId:    "nacos",
+	r, err := New(configClient, "test", "nacos.env")
+	if err != nil {
+		t.Errorf("New() error = %v", err)
+		return
 	}
-	notifyC := make(chan *config.Event, 1)
+	notifyC := make(chan *structpb.Struct, 1)
+	errC := make(chan error, 1)
 	// Start watching
 	ctx := context.Background()
-	stopFunc, err := r.Watch(ctx, notifyC)
+	stopFunc, err := r.Watch(ctx, notifyC, errC)
 	if err != nil {
 		t.Errorf("Watch() error = %v", err)
 		return
@@ -134,7 +136,7 @@ func TestResource_Watch_Nacos(t *testing.T) {
 		for {
 			time.Sleep(time.Second)
 			ok, err := configClient.PublishConfig(vo.ConfigParam{
-				DataId:  "nacos",
+				DataId:  "nacos.env",
 				Group:   "test",
 				Content: "TEST_KEY_NEW=test_value_new" + time.Now().Format(time.RFC3339),
 			})
@@ -148,15 +150,15 @@ func TestResource_Watch_Nacos(t *testing.T) {
 
 	// Wait for the event
 	select {
-	case event := <-notifyC:
-		if data, ok := event.AsDataEvent(); !ok || data.Data == nil {
+	case value := <-notifyC:
+		if value == nil {
 			t.Error("Expected DataEvent with non-nil data")
 		}
 	case <-time.After(100 * time.Second):
 		t.Error("No event received within the timeout")
 	}
 
-	stopFunc()
+	stopFunc(ctx)
 
 	_, err = configClient.PublishConfig(vo.ConfigParam{
 		DataId:  "nacos",
@@ -169,9 +171,8 @@ func TestResource_Watch_Nacos(t *testing.T) {
 	}
 
 	select {
-	case event := <-notifyC:
-		err, ok := event.AsErrorEvent()
-		if !ok || err.Err == nil || !errors.Is(err.Err, config.ErrStopWatch) {
+	case data := <-notifyC:
+		if data != nil {
 			t.Error("Did not expect to receive an event after stopping the watcher")
 		}
 	case <-time.After(100 * time.Millisecond):
