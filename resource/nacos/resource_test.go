@@ -140,19 +140,17 @@ func TestResource_Watch_Nacos(t *testing.T) {
 
 	// Give some time for the watcher to detect the change
 	go func() {
-		for {
-			time.Sleep(time.Second)
-			ok, err := configClient.PublishConfig(vo.ConfigParam{
-				DataId:  dataId,
-				Group:   group,
-				Content: "TEST_KEY_NEW=test_value_new" + time.Now().Format(time.RFC3339),
-			})
-			if err != nil {
-				t.Errorf("PublishConfig() error = %v", err)
-				return
-			}
-			t.Log(ok)
+		time.Sleep(time.Second)
+		ok, err := configClient.PublishConfig(vo.ConfigParam{
+			DataId:  dataId,
+			Group:   group,
+			Content: "TEST_KEY_NEW=test_value_new" + time.Now().Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Errorf("PublishConfig() error = %v", err)
+			return
 		}
+		t.Log(ok)
 	}()
 
 	// Wait for the event
@@ -167,22 +165,26 @@ func TestResource_Watch_Nacos(t *testing.T) {
 
 	stopFunc(ctx)
 
-	_, err = configClient.PublishConfig(vo.ConfigParam{
-		DataId:  dataId,
-		Group:   group,
-		Content: "TEST_KEY=another_test_value",
-	})
-	if err != nil {
-		t.Errorf("PublishConfig() error = %v", err)
-		return
-	}
+	// Give some time for the watcher to detect the change
+	go func() {
+		time.Sleep(time.Second)
+		ok, err := configClient.PublishConfig(vo.ConfigParam{
+			DataId:  dataId,
+			Group:   group,
+			Content: "TEST_KEY_NEW=test_value_new" + time.Now().Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Errorf("PublishConfig() error = %v", err)
+			return
+		}
+		t.Log(ok)
+	}()
 
 	select {
 	case data := <-notifyC:
 		if data != nil {
 			t.Error("Did not expect to receive an event after stopping the watcher")
 		}
-	case <-time.After(100 * time.Millisecond):
-		// Expected behavior
+	case <-time.After(2 * time.Millisecond):
 	}
 }

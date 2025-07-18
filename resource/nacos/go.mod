@@ -3,12 +3,12 @@ module github.com/go-leo/config/resource/nacos
 go 1.20
 
 require (
-	github.com/go-leo/config v0.0.0-20250718034340-e42d2cde3e78
+	github.com/go-leo/config v0.0.0-20250718035014-eb125fe8b6df
 	github.com/nacos-group/nacos-sdk-go/v2 v2.2.9
 	golang.org/x/crypto v0.33.0
 	golang.org/x/net v0.35.0
 	golang.org/x/sync v0.11.0
-	golang.org/x/sys v0.31.0
+	golang.org/x/sys v0.30.0
 	google.golang.org/protobuf v1.34.2
 )
 
