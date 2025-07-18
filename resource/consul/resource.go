@@ -1,76 +1,114 @@
 package consul
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
-	"github.com/go-leo/config"
+	"github.com/go-leo/config/format"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
 	"github.com/hashicorp/go-hclog"
+	_ "golang.org/x/exp/maps"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-var _ config.Resource = (*Resource)(nil)
-
 type Resource struct {
-	Formatter config.Formatter
-	Client    *api.Client
-	Key       string
+	client *api.Client
+	key    string
+	ext    string
+
+	formatter format.Formatter
+	data      atomic.Value
 }
 
-func (r *Resource) Format() string {
-	if r.Formatter == nil {
-		return strings.TrimPrefix(filepath.Ext(r.Key), ".")
+func (r *Resource) Load(ctx context.Context) (*structpb.Struct, error) {
+	data, err := r.load(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return r.Formatter.Format()
+	r.data.Store(data)
+	return r.formatter.Parse(data)
 }
 
-func (r *Resource) Load(ctx context.Context) ([]byte, error) {
-	pair, _, err := r.Client.KV().Get(r.Key, nil)
+func (r *Resource) load(ctx context.Context) ([]byte, error) {
+	pair, _, err := r.client.KV().Get(r.key, nil)
 	if err != nil {
 		return nil, err
 	}
 	return pair.Value, nil
 }
 
-func (r *Resource) Watch(ctx context.Context, notifyC chan<- *config.Event) error {
+func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, errC chan<- error) (func(ctx context.Context) error, error) {
 	params := map[string]any{
 		"type": "key",
-		"key":  r.Key,
+		"key":  r.key,
 	}
 	plan, err := watch.Parse(params)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	plan.Handler = func(idx uint64, raw interface{}) {
 		if raw == nil {
 			return
 		}
-		if pair, ok := raw.(*api.KVPair); ok {
-			notifyC <- config.NewDataEvent(pair.Value)
+		pair, ok := raw.(*api.KVPair)
+		if !ok {
+			return
 		}
+		data := pair.Value
+		preData := r.data.Load()
+		if preData != nil && bytes.Equal(preData.([]byte), data) {
+			return
+		}
+		newValue, err := r.formatter.Parse(data)
+		if err != nil {
+			errC <- err
+			return
+		}
+		notifyC <- newValue
+		r.data.Store(data)
 	}
 	go func() {
-		err = plan.RunWithClientAndHclog(r.Client, &consuleLogger{Logger: hclog.NewNullLogger(), notifyC: notifyC})
-		if err != nil {
-			notifyC <- config.NewErrorEvent(err)
-		}
-		notifyC <- config.NewErrorEvent(config.ErrStopWatch)
+		_ = plan.RunWithClientAndHclog(
+			r.client,
+			&consuleLogger{
+				Logger: hclog.NewNullLogger(),
+				errC:   errC,
+			})
 	}()
-	go func() {
-		<-ctx.Done()
+	stop := func(ctx context.Context) error {
 		plan.Stop()
-	}()
-	return nil
+		return nil
+	}
+	return stop, nil
 }
 
 type consuleLogger struct {
 	hclog.Logger
-	notifyC chan<- *config.Event
+	errC chan<- error
 }
 
 func (l *consuleLogger) Error(msg string, args ...interface{}) {
-	l.notifyC <- config.NewErrorEvent(fmt.Errorf(msg, args...))
+	l.errC <- fmt.Errorf(msg, args...)
+}
+
+func New(client *api.Client, key string) (*Resource, error) {
+	ext := strings.TrimPrefix(filepath.Ext(key), ".")
+	if ext == "" {
+		return nil, fmt.Errorf("config: key extension is empty")
+	}
+	formatter, ok := format.GetFormatter(ext)
+	if !ok {
+		return nil, fmt.Errorf("config: not found formatter for %s", ext)
+	}
+	return &Resource{
+		client:    client,
+		key:       key,
+		ext:       ext,
+		formatter: formatter,
+	}, nil
 }

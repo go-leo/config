@@ -1,40 +1,47 @@
 package config
 
 import (
-	"github.com/go-leo/gox/errorx"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-var _ Merger = (*merger)(nil)
+// Merger defines an interface for merging multiple protobuf Structs into one
+type Merger interface {
+	// Merge combines multiple structpb.Struct values into a single struct
+	Merge(values ...*structpb.Struct) *structpb.Struct
+}
 
-// merger Merger 接口默认实现，用于合并多个structpb.Struct对象。
-// 如果两个struct对象有相同的key，则使用后面的值覆盖前面的值。
+// merger implements the Merger interface
 type merger struct{}
 
-// Merge 接收多个structpb.Struct对象，合并它们并返回一个新的structpb.Struct对象。
+// Merge combines multiple structpb.Struct values into a single struct
+// It creates a new target struct and merges all source structs into it
 func (m merger) Merge(values ...*structpb.Struct) *structpb.Struct {
-	target := errorx.Ignore(structpb.NewStruct(map[string]any{}))
+	target := ignoreError(structpb.NewStruct(map[string]any{}))
 	for _, value := range values {
 		m.mergeStruct(target, value)
 	}
 	return target
 }
 
-// mergeStruct 递归地合并两个structpb.Struct对象的字段。
+// mergeStruct merges fields from source struct into target struct
+// For each field in source, it makes a deep copy and adds to target
 func (m merger) mergeStruct(target *structpb.Struct, source *structpb.Struct) {
 	for key, field := range source.GetFields() {
 		target.Fields[key] = m.copyValue(field)
 	}
 }
 
-// 递归地合并两个structpb.ListValue对象的值。
+// mergeList merges values from source ListValue into target ListValue
+// Appends each item from source to target after making a copy
 func (m merger) mergeList(target *structpb.ListValue, source *structpb.ListValue) {
 	for _, item := range source.GetValues() {
 		target.Values = append(target.Values, m.copyValue(item))
 	}
 }
 
-// copyValue 根据structpb.Value的类型，创建并返回一个新的structpb.Value对象。
+// copyValue creates a deep copy of a protobuf Value
+// Handles all types of Value including structs, lists and primitive types
+// Returns NullValue for nil or unknown types
 func (m merger) copyValue(value *structpb.Value) *structpb.Value {
 	if value == nil {
 		return structpb.NewNullValue()
@@ -59,14 +66,14 @@ func (m merger) copyValue(value *structpb.Value) *structpb.Value {
 		if v == nil {
 			return structpb.NewNullValue()
 		}
-		subValue := errorx.Ignore(structpb.NewStruct(map[string]any{}))
+		subValue := ignoreError(structpb.NewStruct(map[string]any{}))
 		m.mergeStruct(subValue, v.StructValue)
 		return structpb.NewStructValue(subValue)
 	case *structpb.Value_ListValue:
 		if v == nil {
 			return structpb.NewNullValue()
 		}
-		subList := errorx.Ignore(structpb.NewList([]any{}))
+		subList := ignoreError(structpb.NewList([]any{}))
 		m.mergeList(subList, v.ListValue)
 		return structpb.NewListValue(subList)
 	case *structpb.Value_NullValue:
@@ -74,4 +81,10 @@ func (m merger) copyValue(value *structpb.Value) *structpb.Value {
 	default:
 		return structpb.NewNullValue()
 	}
+}
+
+// ignoreError is a helper function to ignore the error return value
+// from functions that return (T, error) when we know error won't occur
+func ignoreError[T any](v T, _ error) T {
+	return v
 }

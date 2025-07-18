@@ -2,7 +2,7 @@ package config
 
 import (
 	"github.com/go-leo/config/proto/leo/config"
-	"github.com/go-leo/gox/slicex"
+	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 )
@@ -17,7 +17,7 @@ func NewGenerator(plugin *protogen.Plugin, file *protogen.File) *Generator {
 }
 
 func (f *Generator) Generate() {
-	_, ok := slicex.FindFunc(f.File.Messages, func(message *protogen.Message) bool {
+	_, ok := findFunc(f.File.Messages, func(message *protogen.Message) bool {
 		return proto.HasExtension(message.Desc.Options(), config.E_Enable)
 	})
 	if !ok {
@@ -133,6 +133,14 @@ func (f *Generator) EnabledMessage() []*protogen.Message {
 		messages = append(messages, message)
 	}
 	return messages
+}
+
+func findFunc[E any](s []E, f func(E) bool) (E, bool) {
+	if i := slices.IndexFunc(s, f); i != -1 {
+		return s[i], true
+	}
+	var e E
+	return e, false
 }
 
 var (

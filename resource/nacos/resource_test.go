@@ -2,7 +2,6 @@ package nacos
 
 import (
 	"context"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -13,19 +12,23 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
+	_ "golang.org/x/crypto/chacha20"
+	_ "golang.org/x/net/http2"
+	_ "golang.org/x/sync/singleflight"
+	_ "golang.org/x/sys/unix"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func nacosFactory() (config_client.IConfigClient, error) {
-	sc := []constant.ServerConfig{*constant.NewServerConfig(os.Getenv("Addr"), 8848)}
+	sc := []constant.ServerConfig{
+		*constant.NewServerConfig("127.0.0.1", 8848),
+	}
 	cc := *constant.NewClientConfig(
-		constant.WithNamespaceId("dev"),
 		constant.WithTimeoutMs(5000),
 		constant.WithNotLoadCacheAtStart(true),
+		constant.WithCacheDir("/tmp/nacos/cache"),
 		constant.WithLogLevel("debug"),
 		constant.WithLogDir("/tmp/nacos.log"),
-		constant.WithAccessKey(os.Getenv("AccessKey")),
-		constant.WithSecretKey(os.Getenv("SecretKey")),
 	)
 	return clients.NewConfigClient(
 		vo.NacosClientParam{
@@ -41,12 +44,13 @@ func TestResource_Load_Nacos(t *testing.T) {
 		t.Errorf("factory() error = %v", err)
 		return
 	}
-
 	format.RegisterFormatter("env", env.Env{})
 
+	dataId := "nacos.env"
+	group := "test"
 	_, err = configClient.PublishConfig(vo.ConfigParam{
-		DataId:  "nacos",
-		Group:   "test",
+		DataId:  dataId,
+		Group:   group,
 		Content: "TEST_KEY=test_value",
 	})
 	if err != nil {
@@ -56,8 +60,8 @@ func TestResource_Load_Nacos(t *testing.T) {
 
 	defer func() {
 		_, err = configClient.DeleteConfig(vo.ConfigParam{
-			DataId: "nacos",
-			Group:  "test",
+			DataId: dataId,
+			Group:  group,
 		})
 		if err != nil {
 			t.Errorf("DeleteConfig() error = %v", err)
@@ -67,7 +71,7 @@ func TestResource_Load_Nacos(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	r, err := New(configClient, "test", "nacos.env")
+	r, err := New(configClient, group, dataId)
 	if err != nil {
 		t.Errorf("New() error = %v", err)
 		return
@@ -92,10 +96,13 @@ func TestResource_Watch_Nacos(t *testing.T) {
 		t.Errorf("factory() error = %v", err)
 		return
 	}
+	format.RegisterFormatter("env", env.Env{})
 
+	dataId := "nacos.env"
+	group := "test"
 	_, err = configClient.PublishConfig(vo.ConfigParam{
-		DataId:  "nacos",
-		Group:   "test",
+		DataId:  dataId,
+		Group:   group,
 		Content: "TEST_KEY=test_value",
 	})
 	if err != nil {
@@ -105,8 +112,8 @@ func TestResource_Watch_Nacos(t *testing.T) {
 
 	defer func() {
 		_, err = configClient.DeleteConfig(vo.ConfigParam{
-			DataId: "nacos",
-			Group:  "test",
+			DataId: dataId,
+			Group:  group,
 		})
 		if err != nil {
 			t.Errorf("DeleteConfig() error = %v", err)
@@ -116,7 +123,7 @@ func TestResource_Watch_Nacos(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	r, err := New(configClient, "test", "nacos.env")
+	r, err := New(configClient, group, dataId)
 	if err != nil {
 		t.Errorf("New() error = %v", err)
 		return
@@ -136,8 +143,8 @@ func TestResource_Watch_Nacos(t *testing.T) {
 		for {
 			time.Sleep(time.Second)
 			ok, err := configClient.PublishConfig(vo.ConfigParam{
-				DataId:  "nacos.env",
-				Group:   "test",
+				DataId:  dataId,
+				Group:   group,
 				Content: "TEST_KEY_NEW=test_value_new" + time.Now().Format(time.RFC3339),
 			})
 			if err != nil {
@@ -161,8 +168,8 @@ func TestResource_Watch_Nacos(t *testing.T) {
 	stopFunc(ctx)
 
 	_, err = configClient.PublishConfig(vo.ConfigParam{
-		DataId:  "nacos",
-		Group:   "test",
+		DataId:  dataId,
+		Group:   group,
 		Content: "TEST_KEY=another_test_value",
 	})
 	if err != nil {

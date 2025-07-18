@@ -42,9 +42,9 @@ func TestResource_Load_Consul(t *testing.T) {
 	time.Sleep(time.Second)
 
 	r := Resource{
-		Formatter: config.Env{},
-		Client:    client,
-		Key:       "consul",
+		formatter: config.Env{},
+		client:    client,
+		key:       "consul",
 	}
 	ctx := context.Background()
 	content, err := r.Load(ctx)
@@ -86,9 +86,9 @@ func TestResource_Watch_Consul(t *testing.T) {
 	time.Sleep(time.Second)
 
 	r := Resource{
-		Formatter: config.Env{},
-		Client:    client,
-		Key:       "consul",
+		formatter: config.Env{},
+		client:    client,
+		key:       "consul",
 	}
 
 	notifyC := make(chan *config.Event, 1)
