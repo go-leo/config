@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
 	"github.com/hashicorp/go-hclog"
-	_ "golang.org/x/exp/maps"
+	
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
