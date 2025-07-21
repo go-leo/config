@@ -16,15 +16,21 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+// Resource represents a configuration resource stored in Consul KV store
 type Resource struct {
+	// client Consul API client
 	client *api.Client
-	key    string
-	ext    string
-
+	// key path in Consul KV store
+	key string
+	// ext extension of the config (determines format)
+	ext string
+	// formatter for parsing config data
 	formatter format.Formatter
-	data      atomic.Value
+	// data atomic storage for the configuration data
+	data atomic.Value
 }
 
+// Load retrieves and parses the configuration from Consul
 func (r *Resource) Load(ctx context.Context) (*structpb.Struct, error) {
 	data, err := r.load(ctx)
 	if err != nil {
@@ -34,6 +40,7 @@ func (r *Resource) Load(ctx context.Context) (*structpb.Struct, error) {
 	return r.formatter.Parse(data)
 }
 
+// load is an internal helper to fetch raw data from Consul
 func (r *Resource) load(ctx context.Context) ([]byte, error) {
 	pair, _, err := r.client.KV().Get(r.key, new(api.QueryOptions).WithContext(ctx))
 	if err != nil {
@@ -42,6 +49,10 @@ func (r *Resource) load(ctx context.Context) ([]byte, error) {
 	return pair.Value, nil
 }
 
+// Watch sets up a watcher for configuration changes in Consul
+// notifyC: channel to receive new configuration when changed
+// errC: channel to receive errors during watching
+// Returns a stop function to terminate the watcher and any initialization error
 func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, errC chan<- error) (func(ctx context.Context) error, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -98,15 +109,21 @@ func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, e
 	return stop, nil
 }
 
+// consuleLogger is a custom logger that forwards errors to error channel
 type consuleLogger struct {
 	hclog.Logger
-	errC chan<- error
+	errC chan<- error // Channel to forward errors
 }
 
+// Error implements the hclog.Logger interface and forwards errors to errC
 func (l *consuleLogger) Error(msg string, args ...interface{}) {
 	l.errC <- fmt.Errorf(msg, args...)
 }
 
+// New creates a new Consul configuration resource
+// client: Consul API client
+// key: Path to the configuration in Consul KV store
+// Returns the Resource instance or error if initialization fails
 func New(client *api.Client, key string) (*Resource, error) {
 	ext := strings.TrimPrefix(filepath.Ext(key), ".")
 	if ext == "" {
