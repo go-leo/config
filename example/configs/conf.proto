@@ -1,6 +1,6 @@
 syntax = "proto3";
-package internal.conf;
-option go_package = "github.com/go-leo/leo/v3/example/configs/v1;configs";
+package leo.config.example;
+option go_package = "github.com/go-leo/config/example/configs;configs";
 
 import "leo/config/annotations.proto";
 
@@ -22,4 +22,3 @@ message Redis {
   string password = 3;
   int32 db = 4;
 }
-

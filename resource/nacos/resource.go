@@ -45,6 +45,9 @@ func (r *Resource) load(ctx context.Context) ([]byte, error) {
 }
 
 func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, errC chan<- error) (func(ctx context.Context) error, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	err := r.client.ListenConfig(vo.ConfigParam{
 		Group:  r.group,
 		DataId: r.dataId,
@@ -66,11 +69,24 @@ func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, e
 	if err != nil {
 		return nil, err
 	}
-	stop := func(ctx context.Context) error {
-		return r.client.CancelListenConfig(vo.ConfigParam{
+	stopC := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-stopC:
+		}
+		err := r.client.CancelListenConfig(vo.ConfigParam{
 			Group:  r.group,
 			DataId: r.dataId,
 		})
+		if err != nil {
+			errC <- err
+			return
+		}
+	}()
+	stop := func(ctx context.Context) error {
+		close(stopC)
+		return nil
 	}
 	return stop, nil
 }

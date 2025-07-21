@@ -1,78 +1,125 @@
 package config
 
-// import (
-// 	"context"
-// 	"fmt"
-// 	"testing"
-// 	"time"
+import (
+	"context"
+	"errors"
+	"testing"
 
-// 	"github.com/go-leo/config/test"
-// 	"github.com/stretchr/testify/assert"
-// 	"github.com/stretchr/testify/mock"
-// 	"google.golang.org/protobuf/types/known/structpb"
-// )
+	"github.com/go-leo/config/test"
+	"google.golang.org/protobuf/types/known/structpb"
+)
 
-// var _ Resource = (*MockResource)(nil)
+// 模拟resource.Resource接口
+type mockLoadResource struct {
+	value *structpb.Struct
+	err   error
+}
 
-// // MockResource is a mock struct that implements Resource interface
-// type MockResource struct {
-// 	mock.Mock
-// }
+func (m *mockLoadResource) Load(ctx context.Context) (*structpb.Struct, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return m.value, m.err
+	}
+}
 
-// func (m *MockResource) Load(ctx context.Context) ([]byte, error) {
-// 	args := m.Called(ctx)
-// 	return args.Get(0).([]byte), args.Error(1)
-// }
+func (m *mockLoadResource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, errC chan<- error) (func(context.Context) error, error) {
+	return nil, nil
+}
 
-// func (m *MockResource) Format() string {
-// 	args := m.Called()
-// 	return args.Get(0).(string)
-// }
+func TestLoad(t *testing.T) {
+	// 测试用例1: 单个资源加载成功
+	t.Run("SingleResourceSuccess", func(t *testing.T) {
+		testStruct, _ := structpb.NewStruct(map[string]interface{}{
+			"field1": "value1",
+			"field2": "value2",
+		})
+		res := &mockLoadResource{
+			value: testStruct,
+		}
+		ctx := context.Background()
+		result, err := Load[*test.Config](ctx, res)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
 
-// func (m *MockResource) Watch(ctx context.Context, notifyC chan<- *Event) error {
-// 	args := m.Called(ctx, notifyC)
-// 	return args.Error(1)
-// }
+		if result.Field1 != "value1" && result.Field2 != "value2" {
+			t.Errorf("Expected to be 'value1' and 'value2', got '%s' and '%s'", result.Field1, result.Field2)
+		}
+	})
 
-// var _ Parser = (*MockParser)(nil)
+	// 测试用例2: 多个资源加载成功
+	t.Run("MultipleResourcesSuccess", func(t *testing.T) {
+		testStruct1, _ := structpb.NewStruct(map[string]interface{}{
+			"field1": "value1",
+		})
+		testStruct2, _ := structpb.NewStruct(map[string]interface{}{
+			"field2": "value2",
+		})
+		res1 := &mockLoadResource{value: testStruct1}
+		res2 := &mockLoadResource{value: testStruct2}
 
-// type MockParser struct {
-// 	mock.Mock
-// }
+		ctx := context.Background()
+		result, err := Load[*test.Config](ctx, res1, res2)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if result.Field1 != "value1" && result.Field2 != "value2" {
+			t.Errorf("Expected to be 'value1' and 'value2', got '%s' and '%s'", result.Field1, result.Field2)
+		}
+	})
 
-// func (m *MockParser) Support(format Formatter) bool {
-// 	args := m.Called(format)
-// 	return args.Bool(0)
-// }
+	// 测试用例3: 资源加载失败
+	t.Run("ResourceLoadFailure", func(t *testing.T) {
+		expectedErr := errors.New("load error")
+		res := &mockLoadResource{
+			err: expectedErr,
+		}
 
-// func (m *MockParser) Parse(data []byte) (*structpb.Struct, error) {
-// 	args := m.Called(data)
-// 	return args.Get(0).(*structpb.Struct), args.Error(1)
-// }
+		ctx := context.Background()
+		_, err := Load[*test.Config](ctx, res)
+		if err != expectedErr {
+			t.Errorf("Expected error '%v', got '%v'", expectedErr, err)
+		}
+	})
 
-// func TestLoad(t *testing.T) {
-// 	value, _ := structpb.NewStruct(map[string]any{
-// 		"addr": "127.0.0.1",
-// 		"port": 8080,
-// 	})
-// 	data, _ := value.MarshalJSON()
+	// 测试用例4: 上下文取消
+	t.Run("ContextCancellation", func(t *testing.T) {
+		res := &mockLoadResource{}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-// 	ctx, cancel := context.WithCancel(context.Background())
-// 	defer cancel()
+		_, err := Load[*test.Config](ctx, res)
+		if err != context.Canceled {
+			t.Errorf("Expected context.Canceled error, got '%v'", err)
+		}
+	})
 
-// 	mockParser := new(MockParser)
-// 	mockResource := new(MockResource)
+	// 测试用例5: JSON转换失败
+	t.Run("JSONMarshalFailure", func(t *testing.T) {
+		// 创建一个无法被JSON序列化的无效结构体
+		invalidStruct := &structpb.Struct{
+			Fields: map[string]*structpb.Value{
+				"invalid": {Kind: &structpb.Value_NumberValue{NumberValue: 0}},
+			},
+		}
 
-// 	mockParser.On("Support", mockResource).Return(true)
-// 	mockParser.On("Parse", data).Return(value, nil)
+		res := &mockLoadResource{value: invalidStruct}
 
-// 	mockResource.On("Format", mock.Anything).Return("json")
-// 	mockResource.On("Load", ctx).Return(data, nil)
+		ctx := context.Background()
+		_, err := Load[*test.Config](ctx, res)
+		if err == nil {
+			t.Error("Expected JSON marshal error, got nil")
+		}
+	})
 
-// 	conf, err := Load[*test.Application](ctx, WithResource(mockResource), WithParser(mockParser))
-// 	assert.Nil(t, err)
-
-// 	fmt.Println(conf)
-// 	// Give some time for channels to send data or for the function to return
-// 	time.Sleep(100 * time.Millisecond)
-// }
+	// 测试用例6: 空资源列表
+	t.Run("EmptyResources", func(t *testing.T) {
+		ctx := context.Background()
+		_, err := Load[*test.Config](ctx)
+		if err != nil {
+			t.Errorf("Expected no error with empty resources, got %v", err)
+		}
+	})
+}

@@ -1,83 +1,139 @@
 package config
 
-// import (
-// 	"context"
-// 	"errors"
-// 	"sync"
+import (
+	"context"
+	"errors"
+	"sync"
+	"time"
 
-// 	"github.com/go-leo/gox/syncx/brave"
-// 	"github.com/go-leo/gox/syncx/chanx"
-// 	"google.golang.org/protobuf/proto"
-// )
+	"github.com/go-leo/config/resource"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
+)
 
-// // Watch 函数用于监听指定资源的配置变化，并通过通道发送这些配置。
-// func Watch[Config proto.Message](ctx context.Context, opts ...Option) (<-chan Config, error) {
-// 	// 初始化配置选项。
-// 	opt := newOptions()
-// 	opt.Apply(opts...)
+// Watch continuously monitors configuration resources for changes and sends updates
+// to the provided channels. It handles:
+// - Merging notifications from multiple sources
+// - Debouncing changes and periodically reloading configurations
+// - Proper cleanup via returned stop function
+//
+// Parameters:
+//
+//	ctx      - Context for cancellation and timeout control
+//	notifyC  - Channel to receive configuration updates (protobuf messages)
+//	errC     - Channel to receive any errors during watching
+//	resources - Variadic list of configuration resources to watch
+//
+// Returns:
+//
+//	stop function - Call to clean up all watchers (returns combined errors if any)
+//	error        - Initial error if watching failed to start
+func Watch[Config proto.Message](ctx context.Context, notifyC chan<- Config, errC chan<- error, resources ...resource.Resource) (func(context.Context) error, error) {
+	// Channels from individual resource watchers
+	var notifyCs []chan *structpb.Struct
+	// Stop functions for each watcher
+	var stops []func(context.Context) error
 
-// 	// 创建监听器
-// 	// 遍历 opt.Resources，为每个资源创建一个监听器。创建监听配置变化通道 notifyCs。
-// 	var notifyCs []chan *Event
-// 	var errs []error
-// 	watchCtx, cancelFunc := context.WithCancel(ctx)
-// 	for _, watcher := range opt.Resources {
-// 		notifyC := make(chan *Event, opt.BufferSize)
-// 		// 创建一个带有取消功能的上下文，并调用监听器的Watch方法来启动监听。
-// 		if err := watcher.Watch(watchCtx, notifyC); err != nil {
-// 			errs = append(errs, err)
-// 			break
-// 		}
-// 		notifyCs = append(notifyCs, notifyC)
-// 	}
-// 	// 如果有一个监听错误，则返回错误。
-// 	if len(errs) > 0 {
-// 		// 关闭所有监听器
-// 		cancelFunc()
-// 		return nil, errors.Join(errs...)
-// 	}
+	// Combined stop function that stops all individual watchers
+	stop := func(context.Context) error {
+		var errs []error
+		for _, stop := range stops {
+			if err := stop(ctx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
 
-// 	// 启动多个goroutine，每个goroutine负责处理一个通知通道的事件。
-// 	confC := make(chan Config, opt.BufferSize)
-// 	var wg sync.WaitGroup
-// 	for _, notifyC := range notifyCs {
-// 		wg.Add(1)
-// 		brave.Go(func(notifyC chan *Event) func() {
-// 			return func() {
-// 				defer wg.Done()
-// 				for event := range notifyC {
-// 					// 错误事件
-// 					if errEvent, ok := event.AsErrorEvent(); ok {
-// 						// 如果是停止监听信号，则停止监听并退出goroutine。
-// 						if errors.Is(errEvent.Err, ErrStopWatch) {
-// 							close(notifyC)
-// 							return
-// 						}
-// 						// 其他错误信号。
-// 						opt.ErrorCallback(errEvent.Err)
-// 						continue
-// 					}
-// 					// 数据事件, 重新加载配置。发送到通道中
-// 					conf, err := Load[Config](ctx, opts...)
-// 					if err != nil {
-// 						opt.ErrorCallback(err)
-// 						continue
-// 					}
-// 					_ = chanx.TrySend(confC, conf)
-// 					continue
-// 				}
-// 			}
-// 		}(notifyC))
-// 	}
+	// Start watching each resource
+	for _, watcher := range resources {
+		notifyC := make(chan *structpb.Struct, cap(notifyC))
+		stop, err := watcher.Watch(ctx, notifyC, errC)
+		if err != nil {
+			return nil, errors.Join(err, stop(ctx))
+		}
+		notifyCs = append(notifyCs, notifyC)
+		stops = append(stops, stop)
+	}
 
-// 	// 等待所有都监听完毕
-// 	go func() {
-// 		wg.Wait()
-// 		cancelFunc()
-// 		opt.ErrorCallback(ErrStopWatch)
-// 		close(confC)
-// 	}()
+	// Merge notifications from all watchers into single channel
+	mergedC := fanIn(
+		ctx,
+		appendSendChannel(
+			make([]<-chan *structpb.Struct, 0, len(notifyCs)),
+			notifyCs...,
+		)...,
+	)
 
-// 	// 返回配置通道、错误通道和一个停止监听的函数，该函数会关闭停止通道。
-// 	return confC, nil
-// }
+	// Monitor for changes and reload configurations
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		var changed bool
+		for {
+			select {
+			case <-mergedC: // Received change notification
+				changed = true
+			case <-ticker.C: // Periodic check
+				if !changed {
+					changed = false
+					ticker.Reset(time.Second)
+					continue
+				}
+				// Load and send new configuration
+				config, err := Load[Config](ctx, resources...)
+				if err != nil {
+					errC <- err
+					continue
+				}
+				notifyC <- config
+				changed = false
+				ticker.Reset(time.Second)
+			}
+		}
+	}()
+
+	return stop, nil
+}
+
+// appendSendChannel converts send-only channels to receive-only channels
+// for use in fan-in pattern. This is a helper function for Watch.
+func appendSendChannel[T any](c []<-chan T, channels ...chan T) []<-chan T {
+	for _, ch := range channels {
+		c = append(c, ch)
+	}
+	return c
+}
+
+// fanIn combines multiple input channels into a single output channel.
+// It runs until all input channels are closed or context is cancelled.
+// This is a helper function for Watch.
+func fanIn[T any](ctx context.Context, ins ...<-chan T) <-chan T {
+	out := make(chan T)
+	var wg sync.WaitGroup
+	for _, ch := range ins {
+		wg.Add(1)
+		go func(ch <-chan T) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-ch:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case out <- v:
+					}
+				}
+			}
+		}(ch)
+	}
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}

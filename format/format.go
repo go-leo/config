@@ -9,8 +9,10 @@ import (
 
 // Global formatters registry mapping file extensions to their corresponding parsers
 var (
-	formatters   = make(map[string]Formatter) // Stores registered format parsers
-	parsersMutex sync.RWMutex                 // Mutex to protect concurrent access to formatters
+	// formatters stores registered format parsers
+	formatters = make(map[string]Formatter)
+	// mutex to protect concurrent access to formatters
+	mutex sync.RWMutex
 )
 
 // Formatter interface defines the standard method for parsing configuration data
@@ -33,9 +35,9 @@ type Formatter interface {
 //	ext (string): File extension (e.g., "yaml", "toml")
 //	formatter (Formatter): Implementation of the Formatter interface
 func RegisterFormatter(ext string, formatter Formatter) {
-	parsersMutex.Lock()
+	mutex.Lock()
 	formatters[strings.ToLower(ext)] = formatter
-	parsersMutex.Unlock()
+	mutex.Unlock()
 }
 
 // GetFormatter retrieves the parser associated with a specific file extension
@@ -48,10 +50,8 @@ func RegisterFormatter(ext string, formatter Formatter) {
 //
 //	Formatter: Registered parser or nil if not found
 func GetFormatter(ext string) (Formatter, bool) {
-	var formatter Formatter
-	var ok bool
-	parsersMutex.RLock()
-	formatter, ok = formatters[strings.ToLower(ext)]
-	parsersMutex.RUnlock()
+	mutex.RLock()
+	formatter, ok := formatters[strings.ToLower(ext)]
+	mutex.RUnlock()
 	return formatter, ok
 }

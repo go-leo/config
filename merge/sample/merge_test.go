@@ -1,4 +1,4 @@
-package config
+package sample
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestMergeStructs(t *testing.T) {
-	m := merger{}
+	m := Merger{}
 
 	// Create test structs
 	s1, err := structpb.NewStruct(map[string]interface{}{
@@ -58,7 +58,7 @@ func TestMergeStructs(t *testing.T) {
 }
 
 func TestMergeWithEmptyStruct(t *testing.T) {
-	m := merger{}
+	m := Merger{}
 
 	s1, err := structpb.NewStruct(map[string]interface{}{})
 	if err != nil {
@@ -83,7 +83,7 @@ func TestMergeWithEmptyStruct(t *testing.T) {
 }
 
 func TestMergeLists(t *testing.T) {
-	m := merger{}
+	m := Merger{}
 
 	list1, err := structpb.NewList([]interface{}{1, 2})
 	if err != nil {
@@ -116,7 +116,7 @@ func TestMergeLists(t *testing.T) {
 }
 
 func TestCopyValue(t *testing.T) {
-	m := merger{}
+	m := Merger{}
 
 	tests := []struct {
 		name  string
@@ -156,7 +156,7 @@ func TestCopyValue(t *testing.T) {
 			},
 		},
 		{
-			name: "null",
+			name:  "null",
 			value: structpb.NewNullValue(),
 			check: func(v *structpb.Value) bool {
 				return v.GetKind() == nil || v.GetNullValue() == 0

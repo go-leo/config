@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
 	"github.com/hashicorp/go-hclog"
-	
+
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -35,7 +35,7 @@ func (r *Resource) Load(ctx context.Context) (*structpb.Struct, error) {
 }
 
 func (r *Resource) load(ctx context.Context) ([]byte, error) {
-	pair, _, err := r.client.KV().Get(r.key, nil)
+	pair, _, err := r.client.KV().Get(r.key, new(api.QueryOptions).WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +43,9 @@ func (r *Resource) load(ctx context.Context) ([]byte, error) {
 }
 
 func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, errC chan<- error) (func(ctx context.Context) error, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	params := map[string]any{
 		"type": "key",
 		"key":  r.key,
@@ -80,8 +83,16 @@ func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, e
 				errC:   errC,
 			})
 	}()
-	stop := func(ctx context.Context) error {
+	stopC := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-stopC:
+		}
 		plan.Stop()
+	}()
+	stop := func(ctx context.Context) error {
+		close(stopC)
 		return nil
 	}
 	return stop, nil

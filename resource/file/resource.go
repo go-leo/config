@@ -36,6 +36,9 @@ func (r *Resource) load(ctx context.Context) ([]byte, error) {
 }
 
 func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, errC chan<- error) (func(ctx context.Context) error, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
