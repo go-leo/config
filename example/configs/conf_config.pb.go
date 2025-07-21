@@ -38,16 +38,15 @@ func LoadApplicationConfig(ctx context.Context, resources ...resource.Resource) 
 	return nil
 }
 
-func WatchApplicationConfig(ctx context.Context, resources ...resource.Resource) (<-chan struct{}, func(context.Context)error, error) {
+func WatchApplicationConfig(ctx context.Context, resources ...resource.Resource) (<-chan struct{}, func(context.Context) error, error) {
 	notifyC := make(chan *Application)
 	errC := make(chan error)
-	stop, err := config.Watch[*Application](ctx, notifyC, errC, resources...)
+	stop, err := config.Watch(ctx, notifyC, errC, resources...)
 	if err != nil {
 		return nil, nil, err
 	}
 	changedC := make(chan struct{}, 1)
 	go func() {
-		defer close(changedC)
 		for {
 			select {
 			case <-ctx.Done():
@@ -58,12 +57,10 @@ func WatchApplicationConfig(ctx context.Context, resources ...resource.Resource)
 				case <-ctx.Done():
 					return
 				case changedC <- struct{}{}:
-					default:
+				default:
 				}
-				
 			}
 		}
 	}()
 	return changedC, stop, nil
 }
-
