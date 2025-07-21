@@ -67,7 +67,7 @@ func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, e
 				if !ok {
 					return
 				}
-				if filepath.Clean(event.Name) != r.filename {
+				if filepath.Clean(event.Name) != filepath.Clean(r.filename) {
 					continue
 				}
 				if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {

@@ -56,7 +56,6 @@ func (r *Resource) Watch(ctx context.Context, notifyC chan<- *structpb.Struct, e
 	}
 	go func() {
 		for {
-			fmt.Println("watch")
 			select {
 			case <-ctx.Done():
 				return
